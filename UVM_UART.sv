@@ -51,7 +51,7 @@ class tx_transaction extends uvm_sequence_item;
     `uvm_object_utils_end
 
     constraint prescale_range{
-        prescale inside {4,8};
+        prescale inside {4,8,16};
     }
 
 endclass
@@ -127,6 +127,58 @@ class rx_seq extends uvm_sequence #(rx_transaction);
         end
     endtask
 
+endclass
+
+class tx_seqr extends uvm_sequencer #(tx_transaction);
+    `uvm_component_utils(tx_seqr)
+
+    function new(string inst="tx_seqr");
+        super.new(inst);
+    endfunction
+endclass
+
+class rx_seqr extends uvm_sequencer #(rx_transaction);
+    `uvm_component_utils(rx_seqr)
+
+    function new(string inst="rx_seqr");
+        super.new(inst);
+    endfunction
+endclass
+
+class virtual_seqr extends uvm_sequencer;
+    `uvm_component_utils(virtual_seqr)
+
+    tx_seqr tx_seqr1;
+    rx_seqr rx_seqr1;
+
+    function new(string name = "virtual_seqr", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+endclass
+
+class virtual_seq extends uvm_sequence;
+    `uvm_object_utils(virtual_seq)
+    `uvm_declare_p_sequencer(virtual_seqr)
+
+    tx_seq tx_seq1;
+    rx_seq rx_seq1;
+
+    tx_seqr tx_seqr1;
+    rx_seqr rx_seqr1;
+
+    function new (string name = "virtual_seq");
+        super.new(name);
+    endfunction
+
+    task body();
+        tx_seq1 = tx_seq::type_id::create("tx_seq1");
+        rx_seq1 = rx_seq::type_id::create("rx_seq1");
+
+        fork
+            tx_seq1.start(p_sequencer.tx_seqr1);
+            rx_seq1.start(p_sequencer.rx_seqr1);
+        join
+    endtask
 endclass
 
 class tx_driver extends uvm_driver #(tx_transaction);
@@ -239,10 +291,49 @@ endclass
 
 class agent extends uvm_agent;
     `uvm_component_utils(agent)
-endclass
 
+    tx_driver tx_drv;
+    //rx_driver rx_drv;
+
+    tx_monitor tx_mon;
+    //rx_monitor rx_mon;
+
+    //uvm_sequencer #(tx_transaction) seqr;
+
+    uvm_analysis_port #(rx_transaction) agt_ap;
+
+    function new(input string inst="agent",uvm_component comp);
+        super.new(inst,comp);
+        agt_ap = new("agt_ap",this);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        tx_drv = tx_driver::type_id::create("tx_drv1",this);
+        tx_mon = tx_monitor::type_id::create("tx_mon1",this);
+
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+
+    endfunction
+
+    task run_phase (uvm_phase phase);
+
+    endtask
+
+endclass
 
 class scoreboard extends uvm_scoreboard;
     `uvm_component_utils(scoreboard)
+
+endclass
+
+class environment extends uvm_env;
+    `uvm_component_utils(environment)
+
+    tx_transaction tx_trans;
+    rx_transaction rx_trans;
+
 
 endclass
