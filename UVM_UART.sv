@@ -255,7 +255,7 @@ class tx_monitor extends uvm_monitor;
 
     task run_phase (uvm_phase phase);
         forever begin
-            
+            //use tx_write function
         end
     endtask
 
@@ -283,7 +283,7 @@ class rx_monitor extends uvm_monitor;
 
     task run_phase (uvm_phase phase);
         forever begin
-            
+            //use rx_write function
         end
     endtask
 
@@ -298,7 +298,9 @@ class agent extends uvm_agent;
     tx_monitor tx_mon;
     //rx_monitor rx_mon;
 
-    //uvm_sequencer #(tx_transaction) seqr;
+    //uvm_sequencer #(tx_transaction) tx_seqr1;
+    tx_seqr tx_seqr1;
+    //rx_seqr rx_seqr1;
 
     uvm_analysis_port #(rx_transaction) agt_ap;
 
@@ -315,7 +317,7 @@ class agent extends uvm_agent;
     endfunction
 
     function void connect_phase(uvm_phase phase);
-
+        //connect drv & seqr
     endfunction
 
     task run_phase (uvm_phase phase);
@@ -326,6 +328,32 @@ endclass
 
 class scoreboard extends uvm_scoreboard;
     `uvm_component_utils(scoreboard)
+    
+    uvm_analysis_imp #(tx_transaction, scoreboard) tx_sco_ap,rx_sco_ap; //transaction
+    tx_transaction tx_trans[$];
+    rx_transaction rx_trans[$];
+
+    function new(string name="scoreboard",uvm_component comp);
+        super.new(name,comp);
+        tx_sco_ap = new("tx_sco_ap", this);
+        rx_sco_ap = new("rx_sco_ap", this);
+    endfunction
+
+    //2 write functions:
+    virtual function void tx_write(tx_transaction recv);
+        tx_trans.push_back(recv);
+        //`uvm_info(get_type_name, "inside tx write function",UVM_NONE)
+    endfunction
+
+    virtual function void rx_write(rx_transaction recv);
+        rx_trans.push_back(recv);
+        //`uvm_info(get_type_name, "inside rx write function",UVM_NONE)
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        //reference model
+    endtask
+
 
 endclass
 
@@ -335,5 +363,89 @@ class environment extends uvm_env;
     tx_transaction tx_trans;
     rx_transaction rx_trans;
 
+    agent tx_agent,rx_agent;
 
+    virtual_seqr virtual_seqr1;
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        virtual_seqr1 = virtual_seqr::type_id::create("virtual_seqr1");
+        tx_agent = agent::type_id::create("tx_agent");
+        rx_agent = agent::type_id::create("rx_agent");
+
+        set_inst_override_by_type("rx_agent.*",tx_driver::get_type(),rx_driver::get_type());
+        set_inst_override_by_type("rx_agent.*",tx_monitor::get_type(),rx_monitor::get_type());
+        set_inst_override_by_type("rx_agent.*",tx_seqr::get_type(),rx_seqr::get_type());
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+        virtual_seqr1.tx_seqr1 = tx_agent.tx_seqr1;
+        virtual_seqr1.rx_seqr1 = rx_agent.tx_seqr1;
+
+        //coneect scoreboard with two agents
+    endfunction
 endclass
+
+class test1 extends uvm_test;
+    `uvm_component_utils(test1)
+
+    environment env1;
+    virtual_seq virtual_seq1;
+
+    function new(string name="test1",uvm_component parent);
+        super.new(name,parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        virtual_seq1 = virtual_seq::type_id::create("virtual_seq1");
+        env1 = environment::type_id::create("env1");
+    endfunction
+        
+    task run_phase(uvm_phase phase);
+        phase.raise_objection(this);
+        virtual_seq1.start(env1.virtual_seqr1);
+        #6000;
+        `uvm_info("test1","before dropping objection",UVM_NONE)
+        phase.drop_objection(this);
+    endtask
+endclass
+
+module top();
+
+    test1 t1;
+    my_interface intf_inst();
+
+    UART_TOP dut(
+        .clk(intf_inst.clk),
+        .rst(intf_inst.rst),
+        .data_in_bus(intf_inst.data_in_bus),
+        .data_valid_in(intf_inst.data_valid_in),
+        .data_in_wire(intf_inst.data_in_wire),
+        .par_enable(intf_inst.par_enable),
+        .prescale(intf_inst.prescale),
+        .par_type(intf_inst.par_type),
+
+        .data_out_wire(intf_inst.data_out_wire),
+        .busy(intf_inst.busy),
+        .data_out_bus(intf_inst.data_out_bus),
+        .data_valid_out(intf_inst.data_valid_out)
+    );
+
+    initial begin
+        intf_inst.clk = 1'b0;
+        /*intf_inst.rst = 1'b0;
+        #10
+        intf_inst.rst = 1'b1;*/
+    end
+
+    always #5 intf_inst.clk = ~intf_inst.clk;
+
+    initial begin
+        $dumpvars;
+        t1 = new("t1", null);
+        uvm_config_db #(virtual my_interface)::set(null, "*", "my_intf", intf_inst);
+        run_test();
+        //#500;
+    end
+endmodule
