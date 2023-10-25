@@ -433,6 +433,47 @@ class scoreboard extends uvm_scoreboard;
 
 endclass
 
+class fun_coverage extends uvm_subsciber #(transaction);
+    `uvm_component_utils(fun_coverage)
+    `uvm_analysis_imp_decl(_tx)
+    `uvm_analysis_imp_decl(_rx)
+    
+    uvm_analysis_imp_tx #(transaction, scoreboard) tx_cov_ap_tx; //transaction
+    uvm_analysis_imp_rx #(transaction, scoreboard) rx_cov_ap_rx;
+
+    transaction tx_trans, rx_trans;
+
+    covergroup cg_tx;
+        cp1_tx: coverpoint tx_trans.data_in_bus;
+        cp2_tx: coverpoint tx_trans.data_valid_in;
+        cp3_tx: coverpoint tx_trans.par_enable;
+        cp4_tx: coverpoint tx_trans.par_type;
+    endgroup
+
+    covergroup cg_rx;
+        cp1_rx: coverpoint rx_trans.data_in_wire;
+        cp2_rx: coverpoint rx_trans.prescale;
+    endgroup
+
+    function new(string name="fun_coverage",uvm_component parent);
+        super.new(name,parent);
+        tx_cov_ap_tx = new("tx_cov_ap_tx",this);
+        tx_cov_ap_rx = new("tx_cov_ap_rx",this);
+        cg_tx = new();
+        cg_rx = new();
+    endfunction
+
+    virtual function void write_tx(transaction recv);
+        tx_trans = recv;
+        cg_tx.sample();
+    endfunction
+
+    virtual function void write_rx(transaction recv);
+        rx_trans = recv;
+        cg_rx.sample();
+    endfunction
+endclass
+
 class environment extends uvm_env;
     `uvm_component_utils(environment)
 
