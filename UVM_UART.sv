@@ -17,7 +17,7 @@ interface my_interface;
     logic data_valid_out;
 endinterface
 
-class tx_transaction extends uvm_sequence_item;
+class transaction extends uvm_sequence_item;
 
     rand logic rst;
     rand logic [7:0] data_in_bus;
@@ -32,11 +32,11 @@ class tx_transaction extends uvm_sequence_item;
     logic [7:0] data_out_bus;
     logic data_valid_out;
 
-    function new(input string inst = "tx_transaction");
+    function new(input string inst = "transaction");
         super.new(inst);
     endfunction
 
-    `uvm_object_utils_begin(tx_transaction)
+    `uvm_object_utils_begin(transaction)
     `uvm_field_int(data_in_bus,UVM_DEC)
     `uvm_field_int(rst,UVM_DEC)
     `uvm_field_int(data_valid_in,UVM_DEC)
@@ -53,10 +53,13 @@ class tx_transaction extends uvm_sequence_item;
     constraint prescale_range{
         prescale inside {4,8,16};
     }
+    constraint rst_weight{
+        rst dist {1 := 1, 0 := 9};
+    }
 
 endclass
 
-class rx_transaction extends uvm_sequence_item;
+/*class rx_transaction extends uvm_sequence_item;
 
     rand logic rst;
     rand logic [7:0] data_in_bus;
@@ -89,20 +92,20 @@ class rx_transaction extends uvm_sequence_item;
     `uvm_field_int(data_valid_out,UVM_DEC)
     `uvm_object_utils_end
 
-endclass
+endclass*/
 
-class tx_seq extends uvm_sequence #(tx_transaction);
+class tx_seq extends uvm_sequence #(transaction);
 
     `uvm_object_utils(tx_seq)
 
-    tx_transaction tx_trans;
+    transaction tx_trans;
 
     function new (input string inst="tx_seq");
         super.new(inst);
     endfunction
 
     task body();
-        tx_trans = tx_transaction::type_id::create("tx_trans");
+        tx_trans = transaction::type_id::create("tx_trans");
         for(int i = 0;i<2;i++)begin
             `uvm_do(tx_trans);
         end
@@ -110,18 +113,18 @@ class tx_seq extends uvm_sequence #(tx_transaction);
 
 endclass
 
-class rx_seq extends uvm_sequence #(rx_transaction);
+class rx_seq extends uvm_sequence #(transaction);
 
     `uvm_object_utils(rx_seq)
 
-    tx_transaction rx_trans;
+    transaction rx_trans;
 
     function new (input string inst="rx_seq");
         super.new(inst);
     endfunction
 
     task body();
-        rx_trans = tx_transaction::type_id::create("rx_trans");
+        rx_trans = transaction::type_id::create("rx_trans");
         for(int i = 0;i<2;i++)begin
             `uvm_do(rx_trans);
         end
@@ -129,7 +132,7 @@ class rx_seq extends uvm_sequence #(rx_transaction);
 
 endclass
 
-class tx_seqr extends uvm_sequencer #(tx_transaction);
+class tx_seqr extends uvm_sequencer #(transaction);
     `uvm_component_utils(tx_seqr)
 
     function new(string inst="tx_seqr");
@@ -137,7 +140,7 @@ class tx_seqr extends uvm_sequencer #(tx_transaction);
     endfunction
 endclass
 
-class rx_seqr extends uvm_sequencer #(rx_transaction);
+class rx_seqr extends uvm_sequencer #(transaction);
     `uvm_component_utils(rx_seqr)
 
     function new(string inst="rx_seqr");
@@ -181,10 +184,10 @@ class virtual_seq extends uvm_sequence;
     endtask
 endclass
 
-class tx_driver extends uvm_driver #(tx_transaction);
+class tx_driver extends uvm_driver #(transaction);
     `uvm_component_utils(tx_driver)
 
-    tx_transaction tx_trans;
+    transaction tx_trans;
     virtual my_interface tx_drv_intf;
 
     function new(input string inst="tx_driver",uvm_component comp);
@@ -193,7 +196,7 @@ class tx_driver extends uvm_driver #(tx_transaction);
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
-        tx_trans = tx_transaction::type_id::create("tx_trans");
+        tx_trans = transaction::type_id::create("tx_trans");
         
         if(!uvm_config_db#(virtual my_intf)::get(this,"","my_intf", tx_drv_intf))
             `uvm_fatal("tx_driver", "Unable to access interface")
@@ -201,7 +204,15 @@ class tx_driver extends uvm_driver #(tx_transaction);
 
     task run_phase (uvm_phase phase);
         forever begin
-            
+            seq_item_port.get_next_item(tx_trans);
+            tx_drv_intf.rst = tx_trans.rst;
+            tx_drv_intf.data_in_bus = tx_trans.data_in_bus;
+            tx_drv_intf.data_valid_in = tx_trans.data_valid_in;
+            tx_drv_intf.par_enable = tx_trans.par_enable;
+            tx_drv_intf.par_type = tx_trans.par_type;
+            seq_item_port.item_done();
+            //@(negedge top.dut.tx_clk); //or delay
+            #10000; //wait for the frame to finish
         end
     endtask
 
@@ -210,7 +221,7 @@ endclass
 class rx_driver extends uvm_driver;
     `uvm_component_utils(rx_driver)
 
-    rx_transaction rx_trans;
+    transaction rx_trans;
     virtual my_interface rx_drv_intf;
 
     function new(input string inst="rx_driver",uvm_component comp);
@@ -219,7 +230,7 @@ class rx_driver extends uvm_driver;
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
-        rx_trans = rx_transaction::type_id::create("rx_trans");
+        rx_trans = transaction::type_id::create("rx_trans");
         
         if(!uvm_config_db#(virtual my_intf)::get(this,"","my_intf", rx_drv_intf))
             `uvm_fatal("rx_driver", "Unable to access interface")
@@ -227,7 +238,15 @@ class rx_driver extends uvm_driver;
 
     task run_phase (uvm_phase phase);
         forever begin
-            
+            seq_item_port.get_next_item(rx_trans);
+            rx_drv_intf.rst = rx_trans.rst;
+            //for loop at each negedge for the array of data in wire
+            rx_drv_intf.data_in_wire = rx_trans.data_in_wire;
+            rx_drv_intf.prescale = rx_trans.prescale;
+            rx_drv_intf.par_enable = rx_trans.par_enable;
+            rx_drv_intf.par_type = rx_trans.par_type;
+            seq_item_port.item_done();
+            @(negedge top.dut.rx_clk);
         end
     endtask
 
@@ -235,10 +254,14 @@ endclass
 
 class tx_monitor extends uvm_monitor;
     `uvm_component_utils(tx_monitor)
+    //`uvm_analysis_imp_decl(_tx)
 
-    tx_transaction tx_trans;
+    transaction tx_trans;
     virtual my_interface tx_mon_intf;
-    uvm_analysis_port #(tx_transaction) tx_mon_ap;
+    uvm_analysis_port #(transaction) tx_mon_ap;
+
+    bit [7:0] packed_data;
+    int ii=0;
 
     function new(input string inst="tx_monitor",uvm_component comp);
         super.new(inst,comp);
@@ -247,7 +270,7 @@ class tx_monitor extends uvm_monitor;
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
-        tx_trans = tx_transaction::type_id::create("tx_trans");
+        tx_trans = transaction::type_id::create("tx_trans");
         
         if(!uvm_config_db#(virtual my_intf)::get(this,"","my_intf", tx_mon_intf))
             `uvm_fatal("tx_monitor", "Unable to access interface")
@@ -255,6 +278,20 @@ class tx_monitor extends uvm_monitor;
 
     task run_phase (uvm_phase phase);
         forever begin
+            @(posedge top.dut.tx_clk)
+            if(tx_mon_intf.busy)begin
+                tx_trans.rst = tx_mon_intf.rst;
+                tx_trans.data_in_bus = tx_mon_intf.data_in_bus;
+                tx_trans.data_valid_in = tx_mon_intf.data_valid_in;
+                tx_trans.par_enable = tx_mon_intf.par_enable;
+                tx_trans.par_type = tx_mon_intf.par_type;
+                tx_trans.data_out_wire = tx_mon_intf.data_out_wire;
+                tx_trans.busy = tx_mon_intf.busy;
+                tx_trans.print();
+                tx_mon_ap.write_tx_mon_ap(tx_trans);
+                ii++;
+            end
+            ii=0;
             //use tx_write function
         end
     endtask
@@ -263,10 +300,11 @@ endclass
 
 class rx_monitor extends uvm_monitor;
     `uvm_component_utils(rx_monitor)
+    `uvm_analysis_imp_decl(_rx)
 
-    rx_transaction rx_trans;
+    transaction rx_trans;
     virtual my_interface rx_mon_intf;
-    uvm_analysis_port #(rx_transaction) rx_mon_ap;
+    uvm_analysis_port #(transaction) rx_mon_ap;
 
     function new(input string inst="rx_monitor",uvm_component comp);
         super.new(inst,comp);
@@ -275,7 +313,7 @@ class rx_monitor extends uvm_monitor;
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
-        rx_trans = rx_transaction::type_id::create("rx_trans");
+        rx_trans = transaction::type_id::create("rx_trans");
         
         if(!uvm_config_db#(virtual my_intf)::get(this,"","my_intf", rx_mon_intf))
             `uvm_fatal("rx_monitor", "Unable to access interface")
@@ -298,11 +336,10 @@ class agent extends uvm_agent;
     tx_monitor tx_mon;
     //rx_monitor rx_mon;
 
-    //uvm_sequencer #(tx_transaction) tx_seqr1;
     tx_seqr tx_seqr1;
     //rx_seqr rx_seqr1;
 
-    uvm_analysis_port #(rx_transaction) agt_ap;
+    uvm_analysis_port #(transaction) agt_ap; //transaction
 
     function new(input string inst="agent",uvm_component comp);
         super.new(inst,comp);
@@ -313,25 +350,28 @@ class agent extends uvm_agent;
         super.build_phase(phase);
         tx_drv = tx_driver::type_id::create("tx_drv1",this);
         tx_mon = tx_monitor::type_id::create("tx_mon1",this);
+        tx_seqr1 = tx_seqr::type_id::create("tx_seqr1",this);
 
     endfunction
 
     function void connect_phase(uvm_phase phase);
         //connect drv & seqr
+        tx_drv.seq_item_port.connect(tx_seqr1.seq_item_export);
+        //connect monitor ap to agent ap
+        tx_mon.tx_mon_ap.connect(agt_ap);
     endfunction
-
-    task run_phase (uvm_phase phase);
-
-    endtask
 
 endclass
 
 class scoreboard extends uvm_scoreboard;
     `uvm_component_utils(scoreboard)
+    `uvm_analysis_imp_decl(_tx_mon_ap)
     
-    uvm_analysis_imp #(tx_transaction, scoreboard) tx_sco_ap,rx_sco_ap; //transaction
-    tx_transaction tx_trans[$];
-    rx_transaction rx_trans[$];
+    uvm_analysis_imp_tx_mon_ap #(transaction, scoreboard) tx_sco_ap,rx_sco_ap; //transaction
+    transaction tx_trans[$];
+    transaction rx_trans[$];
+
+    transaction tx_trans_item,rx_trans_item;
 
     function new(string name="scoreboard",uvm_component comp);
         super.new(name,comp);
@@ -340,18 +380,92 @@ class scoreboard extends uvm_scoreboard;
     endfunction
 
     //2 write functions:
-    virtual function void tx_write(tx_transaction recv);
+    virtual function void write_tx_mon_ap(transaction recv);
         tx_trans.push_back(recv);
         //`uvm_info(get_type_name, "inside tx write function",UVM_NONE)
     endfunction
 
-    virtual function void rx_write(rx_transaction recv);
+    virtual function void write_rx(transaction recv);
         rx_trans.push_back(recv);
         //`uvm_info(get_type_name, "inside rx write function",UVM_NONE)
     endfunction
 
+    task tx_sco(); //chech start bit, parity bit, stop bit, and data.
+        int count=0;
+        bit [7:0] data_check;
+        bit [10:0] packed_data_par;
+        bit [9:0] packed_data_no_par;
+        forever begin
+            wait(tx_trans.size>0);
+            if(tx_trans.size>0)begin
+                tx_trans_item = tx_trans.pop_front();
+                if(!tx_trans_item.rst)begin
+                    if(tx_trans_item.data_out_wire == 0)begin
+                        `uvm_info(get_type_name,"Result is as Expected",UVM_NONE)
+                    end
+                    else begin
+                        `uvm_info(get_type_name,"Error, data doesn't match!",UVM_NONE)
+                    end
+                end
+                else if(tx_trans_item.data_valid_in)begin
+                    data_check = tx_trans_item.data_in_bus;
+                end
+                
+                if(tx_trans_item.busy)begin
+                    if(tx_trans_item.par_enable)begin
+                        if(count <11)begin
+                            packed_data_par[count] = tx_trans_item.data_out_wire;
+                            count++;
+                        end
+                        else begin
+                            count = 0;
+                            if(data_check == packed_data_par[8:1])begin
+                                `uvm_info(get_type_name,"Result is as Expected",UVM_NONE)
+                            end
+                            else begin
+                                `uvm_info(get_type_name,"Error, data doesn't match!",UVM_NONE)
+                            end
+                        end
+                    end
+                    else begin
+                       if(count <10)begin
+                            packed_data_no_par[count] = tx_trans_item.data_out_wire;
+                            count++;
+                        end
+                        else begin
+                            count = 0;
+                            if(data_check == packed_data_no_par[8:1])begin
+                                `uvm_info(get_type_name,"Result is as Expected",UVM_NONE)
+                            end
+                            else begin
+                                `uvm_info(get_type_name,"Error, data doesn't match!",UVM_NONE)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    endtask
+
+    task rx_sco();
+        forever begin
+            wait(rx_trans.size>0);
+            if(rx_trans.size>0)begin
+                rx_trans_item = rx_trans.pop_front();
+                /*if(!rx_trans_item.rst)begin
+                    pass
+                end*/
+
+            end
+        end
+    endtask
+
     task run_phase(uvm_phase phase);
         //reference model
+        fork
+            tx_sco();
+            rx_sco();
+        join
     endtask
 
 
@@ -360,29 +474,34 @@ endclass
 class environment extends uvm_env;
     `uvm_component_utils(environment)
 
-    tx_transaction tx_trans;
-    rx_transaction rx_trans;
+    transaction tx_trans;
+    transaction rx_trans;
 
-    agent tx_agent,rx_agent;
+    agent tx_agent1,rx_agent1;
+
+    scoreboard sco1;
 
     virtual_seqr virtual_seqr1;
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
         virtual_seqr1 = virtual_seqr::type_id::create("virtual_seqr1");
-        tx_agent = agent::type_id::create("tx_agent");
-        rx_agent = agent::type_id::create("rx_agent");
+        tx_agent1 = agent::type_id::create("tx_agent1");
+        rx_agent1 = agent::type_id::create("rx_agent1");
+        sco1 = scoreboard::type_id::create("sco1");
 
-        set_inst_override_by_type("rx_agent.*",tx_driver::get_type(),rx_driver::get_type());
-        set_inst_override_by_type("rx_agent.*",tx_monitor::get_type(),rx_monitor::get_type());
-        set_inst_override_by_type("rx_agent.*",tx_seqr::get_type(),rx_seqr::get_type());
+        set_inst_override_by_type("rx_agent1.*",tx_driver::get_type(),rx_driver::get_type());
+        set_inst_override_by_type("rx_agent1.*",tx_monitor::get_type(),rx_monitor::get_type());
+        set_inst_override_by_type("rx_agent1.*",tx_seqr::get_type(),rx_seqr::get_type());
     endfunction
 
     function void connect_phase(uvm_phase phase);
-        virtual_seqr1.tx_seqr1 = tx_agent.tx_seqr1;
-        virtual_seqr1.rx_seqr1 = rx_agent.tx_seqr1;
+        virtual_seqr1.tx_seqr1 = tx_agent1.tx_seqr1;
+        virtual_seqr1.rx_seqr1 = rx_agent1.tx_seqr1;
 
         //coneect scoreboard with two agents
+        tx_agent1.agt_ap.connect(sco1.tx_sco_ap);
+        rx_agent1.agt_ap.connect(sco1.rx_sco_ap);
     endfunction
 endclass
 
