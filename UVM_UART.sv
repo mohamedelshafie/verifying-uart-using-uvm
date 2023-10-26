@@ -71,9 +71,10 @@ class tx_seq extends uvm_sequence #(transaction);
 
     task body();
         tx_trans = transaction::type_id::create("tx_trans");
-        for(int i = 0;i<5;i++)begin
+        for(int i = 0;i<10;i++)begin
             `uvm_do(tx_trans);
         end
+        #1000000;
     endtask
 
 endclass
@@ -170,7 +171,24 @@ class tx_driver extends uvm_driver #(transaction);
             tx_drv_intf.par_type = tx_trans.par_type;
             seq_item_port.item_done();
             //@(negedge top.dut.tx_clk); //or delay
-            #1000000; //wait for the frame to finish
+            //#1000000;
+            if(tx_trans.data_valid_in)begin
+               @(negedge top.dut.tx_clk);
+               tx_drv_intf.data_valid_in = 0;
+            end
+            if(tx_trans.par_enable)begin
+                for (int i=0;i<10;i++) begin
+                    @(negedge top.dut.tx_clk);
+                end
+            end
+            else begin
+                for (int i=0;i<9;i++) begin
+                    @(negedge top.dut.tx_clk);
+                end
+            end
+            
+            //`uvm_info(get_type_name,$sformatf("inside driver @ %d",$time),UVM_NONE)
+            //#1000000; //wait for the frame to finish
         end
     endtask
 
@@ -213,14 +231,11 @@ endclass
 
 class tx_monitor extends uvm_monitor;
     `uvm_component_utils(tx_monitor)
-    //`uvm_analysis_imp_decl(_tx)
 
-    transaction tx_trans;
+    transaction tx_trans, tx_trans_old;
     virtual my_interface tx_mon_intf;
     uvm_analysis_port #(transaction) tx_mon_ap;
 
-    bit [7:0] packed_data;
-    int ii=0;
 
     function new(input string inst="tx_monitor",uvm_component comp);
         super.new(inst,comp);
@@ -236,9 +251,23 @@ class tx_monitor extends uvm_monitor;
     endfunction
 
     virtual task run_phase (uvm_phase phase);
+        /*@(posedge top.dut.tx_clk)
+        //`uvm_info(get_type_name,$sformatf("inside monitor @ %d",$time),UVM_NONE)
+        //#100000;
+        tx_trans.rst = tx_mon_intf.rst;
+        tx_trans.data_in_bus = tx_mon_intf.data_in_bus;
+        tx_trans.data_valid_in = tx_mon_intf.data_valid_in;
+        tx_trans.par_enable = tx_mon_intf.par_enable;
+        tx_trans.par_type = tx_mon_intf.par_type;
+        tx_trans.data_out_wire = tx_mon_intf.data_out_wire;
+        tx_trans.busy = tx_mon_intf.busy;
+        tx_mon_ap.write(tx_trans);
+        tx_trans_old = tx_trans;*/
+        
         forever begin
-            //@(posedge tx_mon_intf.clk)
-            #100000;
+            @(posedge top.dut.tx_clk)
+            //`uvm_info(get_type_name,$sformatf("inside monitor @ %d",$time),UVM_NONE)
+            //#100000;
             tx_trans.rst = tx_mon_intf.rst;
             tx_trans.data_in_bus = tx_mon_intf.data_in_bus;
             tx_trans.data_valid_in = tx_mon_intf.data_valid_in;
@@ -246,13 +275,10 @@ class tx_monitor extends uvm_monitor;
             tx_trans.par_type = tx_mon_intf.par_type;
             tx_trans.data_out_wire = tx_mon_intf.data_out_wire;
             tx_trans.busy = tx_mon_intf.busy;
-            tx_trans.print();
-            //if(tx_mon_intf.busy)begin
+            //if(tx_trans_old != tx_trans)begin
                 tx_mon_ap.write(tx_trans);
-                ii++;
+                //tx_trans_old = tx_trans;
             //end
-            ii=0;
-            //use tx_write function
         end
     endtask
 
@@ -335,6 +361,8 @@ class scoreboard extends uvm_scoreboard;
 
     transaction tx_trans_item,rx_trans_item;
 
+    int pass, fail;
+
     function new(string name="scoreboard",uvm_component comp);
         super.new(name,comp);
         tx_sco_ap_tx = new("tx_sco_ap_tx", this);
@@ -352,61 +380,130 @@ class scoreboard extends uvm_scoreboard;
         //`uvm_info(get_type_name, "inside rx write function",UVM_NONE)
     endfunction
 
-    task tx_sco(); //chech start bit, parity bit, stop bit, and data.
+    task tx_sco(); //chech start bit, parity bit, stop bit, and data(done).
         int count=0;
-        bit [7:0] data_check;
+        bit [7:0] data_check, data_check_old;
         bit [10:0] packed_data_par;
         bit [9:0] packed_data_no_par;
+        bit enable, enable_old;
         forever begin
             wait(tx_trans.size>0);
             if(tx_trans.size>0)begin
+                
                 tx_trans_item = tx_trans.pop_front();
                 if(!tx_trans_item.rst)begin
                     if(tx_trans_item.data_out_wire)begin
                         `uvm_info(get_type_name,"Result is as Expected for rst case",UVM_NONE)
+                        pass++;
                     end
                     else begin
                         `uvm_info(get_type_name,"Error, in rst!",UVM_NONE)
+                        fail++;
                     end
                 end
                 else if(tx_trans_item.data_valid_in)begin
                     data_check = tx_trans_item.data_in_bus;
+                    enable = tx_trans_item.par_enable;
                 end
+                
                 
                 if(tx_trans_item.busy)begin
                     if(tx_trans_item.par_enable)begin
-                        if(count <11)begin
+                        if(count==0)begin
+                            data_check_old = data_check;
+                            enable_old = enable;
+                        end
+                        if(count <10)begin
                             packed_data_par[count] = tx_trans_item.data_out_wire;
                             count++;
                         end
                         else begin
                             count = 0;
-                            if(data_check == packed_data_par[8:1])begin
+                        end
+                        if(count ==10) begin
+                            packed_data_par[count] = tx_trans_item.data_out_wire;
+                            //count = 0;
+                            if(data_check_old == packed_data_par[8:1])begin
                                 `uvm_info(get_type_name,"Result is as Expected for data with parity case",UVM_NONE)
+                                pass++;
                             end
                             else begin
                                 `uvm_info(get_type_name,"Error, in data with parity!",UVM_NONE)
+                                fail++;
                             end
+                            packed_data_par = 0;
                         end
                     end
                     else begin
-                       if(count <10)begin
+                        if(count==0)begin
+                            data_check_old = data_check;
+                            enable_old = enable;
+                        end
+                        if(count <9)begin
                             packed_data_no_par[count] = tx_trans_item.data_out_wire;
                             count++;
                         end
                         else begin
                             count = 0;
-                            if(data_check == packed_data_no_par[8:1])begin
+                        end
+                        if(count ==9) begin
+                            packed_data_no_par[count] = tx_trans_item.data_out_wire;
+                            //count = 0;
+                            if(data_check_old == packed_data_no_par[8:1])begin
                                 `uvm_info(get_type_name,"Result is as Expected for data without parity case",UVM_NONE)
+                                pass++;
                             end
                             else begin
                                 `uvm_info(get_type_name,"Error, in data without parity!",UVM_NONE)
+                                fail++;
                             end
+                            packed_data_no_par = 0;
                         end
                     end
                 end
+                /*else begin
+                    if(tx_trans_item.data_out_wire)begin
+                        if(tx_trans_item.par_enable)begin
+
+                        if(count <10)begin
+                            //packed_data_par[count] = tx_trans_item.data_out_wire;
+                            count++;
+                        end
+                        else begin
+                            count = 0;
+                            //if(data_check_old == packed_data_par[8:1])begin
+                                `uvm_info(get_type_name,"Result is as Expected for idle",UVM_NONE)
+                                pass++;
+                            //end
+                            
+                        end
+                        end
+                        else begin
+
+                            if(count <9)begin
+                                //packed_data_no_par[count] = tx_trans_item.data_out_wire;
+                                count++;
+                            end
+                            else begin
+                                count = 0;
+                                //if(data_check_old == packed_data_no_par[8:1])begin
+                                    `uvm_info(get_type_name,"Result is as Expected for idle",UVM_NONE)
+                                    pass++;
+                                //end
+
+                            end
+                        end
+                    end
+                    //the else is left for the assertions
+                end*/
+                `uvm_info(get_type_name,$sformatf("inside sco, data_check= %b",data_check),UVM_NONE)
+                `uvm_info(get_type_name,$sformatf("inside sco, packed_data_par= %b",packed_data_par),UVM_NONE)
+                `uvm_info(get_type_name,$sformatf("inside sco, packed_data_no_par= %b",packed_data_no_par),UVM_NONE)
+                `uvm_info(get_type_name,$sformatf("inside sco, count= %d",count),UVM_NONE)
+                `uvm_info(get_type_name,$sformatf("inside sco, pass= %d, fail= %d",pass,fail),UVM_NONE)
             end
         end
+        
     endtask
 
     task rx_sco();
@@ -433,17 +530,21 @@ class scoreboard extends uvm_scoreboard;
 
 endclass
 
-class fun_coverage extends uvm_subsciber #(transaction);
+class fun_coverage extends uvm_component ;
     `uvm_component_utils(fun_coverage)
     `uvm_analysis_imp_decl(_tx)
     `uvm_analysis_imp_decl(_rx)
     
-    uvm_analysis_imp_tx #(transaction, scoreboard) tx_cov_ap_tx; //transaction
-    uvm_analysis_imp_rx #(transaction, scoreboard) rx_cov_ap_rx;
+    uvm_analysis_imp_tx #(transaction, fun_coverage) tx_cov_ap_tx; //transaction
+    uvm_analysis_imp_rx #(transaction, fun_coverage) rx_cov_ap_rx;
 
     transaction tx_trans, rx_trans;
 
     covergroup cg_tx;
+        cp0_tx: coverpoint tx_trans.rst{
+            bins b0 = {0};
+            bins b1 = {1};
+        }
         cp1_tx: coverpoint tx_trans.data_in_bus;
         cp2_tx: coverpoint tx_trans.data_valid_in;
         cp3_tx: coverpoint tx_trans.par_enable;
@@ -458,7 +559,7 @@ class fun_coverage extends uvm_subsciber #(transaction);
     function new(string name="fun_coverage",uvm_component parent);
         super.new(name,parent);
         tx_cov_ap_tx = new("tx_cov_ap_tx",this);
-        tx_cov_ap_rx = new("tx_cov_ap_rx",this);
+        rx_cov_ap_rx = new("tx_cov_ap_rx",this);
         cg_tx = new();
         cg_rx = new();
     endfunction
@@ -537,7 +638,7 @@ class test1 extends uvm_test;
     task run_phase(uvm_phase phase);
         phase.raise_objection(this);
         virtual_seq1.start(env1.virtual_seqr1);
-        #6000;
+        //#6000;
         `uvm_info("test1","before dropping objection",UVM_NONE)
         phase.drop_objection(this);
     endtask
