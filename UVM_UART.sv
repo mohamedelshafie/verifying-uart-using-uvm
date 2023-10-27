@@ -71,7 +71,7 @@ class tx_seq extends uvm_sequence #(transaction);
 
     task body();
         tx_trans = transaction::type_id::create("tx_trans");
-        for(int i = 0;i<10;i++)begin
+        for(int i = 0;i<1;i++)begin
             `uvm_do(tx_trans);
         end
         #1000000;
@@ -85,15 +85,49 @@ class rx_seq extends uvm_sequence #(transaction);
 
     transaction rx_trans;
 
+    int count=0;
+
     function new (input string inst="rx_seq");
         super.new(inst);
     endfunction
 
     task body();
         rx_trans = transaction::type_id::create("rx_trans");
-        for(int i = 0;i<1;i++)begin
-            `uvm_do(rx_trans);
+        for(int i = 0;i<60;i++)begin
+            wait_for_grant();
+            rx_trans.randomize();
+            if(rx_trans.par_enable)begin
+                if(count==11)begin
+                    count=0;
+                    rx_trans.par_enable.rand_mode(1);
+                    rx_trans.par_type.rand_mode(1);
+                    rx_trans.prescale.rand_mode(1);
+                end
+                else begin
+                    count++;
+                    rx_trans.par_enable.rand_mode(0);
+                    rx_trans.par_type.rand_mode(0);
+                    rx_trans.prescale.rand_mode(0);
+                end
+            end
+            else begin
+                if(count==10)begin
+                    count=0;
+                    rx_trans.par_enable.rand_mode(1);
+                    rx_trans.par_type.rand_mode(1);
+                    rx_trans.prescale.rand_mode(1);
+                end
+                else begin
+                    count++;
+                    rx_trans.par_enable.rand_mode(0);
+                    rx_trans.par_type.rand_mode(0);
+                    rx_trans.prescale.rand_mode(0);
+                end
+            end
+            send_request(rx_trans);
+            wait_for_item_done();
         end
+        #1000000;
     endtask
 
 endclass
@@ -170,25 +204,22 @@ class tx_driver extends uvm_driver #(transaction);
             tx_drv_intf.par_enable = tx_trans.par_enable;
             tx_drv_intf.par_type = tx_trans.par_type;
             seq_item_port.item_done();
-            //@(negedge top.dut.tx_clk); //or delay
-            //#1000000;
-            if(tx_trans.data_valid_in)begin
+            
+            if(tx_trans.data_valid_in && tx_trans.rst)begin
                @(negedge top.dut.tx_clk);
                tx_drv_intf.data_valid_in = 0;
             end
-            if(tx_trans.par_enable)begin
+            if(tx_trans.par_enable && tx_trans.rst)begin
                 for (int i=0;i<10;i++) begin
                     @(negedge top.dut.tx_clk);
                 end
             end
-            else begin
+            else if(!tx_trans.par_enable && tx_trans.rst) begin
                 for (int i=0;i<9;i++) begin
                     @(negedge top.dut.tx_clk);
                 end
             end
             
-            //`uvm_info(get_type_name,$sformatf("inside driver @ %d",$time),UVM_NONE)
-            //#1000000; //wait for the frame to finish
         end
     endtask
 
@@ -222,8 +253,8 @@ class rx_driver extends tx_driver;
             rx_drv_intf.par_enable = rx_trans.par_enable;
             rx_drv_intf.par_type = rx_trans.par_type;
             seq_item_port.item_done();
-            @(negedge top.dut.rx_clk);
-            @(negedge top.dut.tx_clk);
+            repeat(rx_trans.prescale) @(negedge top.dut.rx_clk);
+
         end
     endtask
 
@@ -250,24 +281,9 @@ class tx_monitor extends uvm_monitor;
             `uvm_fatal("tx_monitor", "Unable to access interface")
     endfunction
 
-    virtual task run_phase (uvm_phase phase);
-        /*@(posedge top.dut.tx_clk)
-        //`uvm_info(get_type_name,$sformatf("inside monitor @ %d",$time),UVM_NONE)
-        //#100000;
-        tx_trans.rst = tx_mon_intf.rst;
-        tx_trans.data_in_bus = tx_mon_intf.data_in_bus;
-        tx_trans.data_valid_in = tx_mon_intf.data_valid_in;
-        tx_trans.par_enable = tx_mon_intf.par_enable;
-        tx_trans.par_type = tx_mon_intf.par_type;
-        tx_trans.data_out_wire = tx_mon_intf.data_out_wire;
-        tx_trans.busy = tx_mon_intf.busy;
-        tx_mon_ap.write(tx_trans);
-        tx_trans_old = tx_trans;*/
-        
+    virtual task run_phase (uvm_phase phase);       
         forever begin
             @(posedge top.dut.tx_clk)
-            //`uvm_info(get_type_name,$sformatf("inside monitor @ %d",$time),UVM_NONE)
-            //#100000;
             tx_trans.rst = tx_mon_intf.rst;
             tx_trans.data_in_bus = tx_mon_intf.data_in_bus;
             tx_trans.data_valid_in = tx_mon_intf.data_valid_in;
@@ -275,10 +291,7 @@ class tx_monitor extends uvm_monitor;
             tx_trans.par_type = tx_mon_intf.par_type;
             tx_trans.data_out_wire = tx_mon_intf.data_out_wire;
             tx_trans.busy = tx_mon_intf.busy;
-            //if(tx_trans_old != tx_trans)begin
-                tx_mon_ap.write(tx_trans);
-                //tx_trans_old = tx_trans;
-            //end
+            tx_mon_ap.write(tx_trans);
         end
     endtask
 
@@ -286,7 +299,6 @@ endclass
 
 class rx_monitor extends tx_monitor;
     `uvm_component_utils(rx_monitor)
-    //`uvm_analysis_imp_decl(_rx)
 
     transaction rx_trans;
     virtual my_interface rx_mon_intf;
@@ -305,11 +317,28 @@ class rx_monitor extends tx_monitor;
             `uvm_fatal("rx_monitor", "Unable to access interface")
     endfunction
 
-    /*task run_phase (uvm_phase phase);
+    task run_phase (uvm_phase phase);
         forever begin
-            //use rx_write function
+            @(posedge top.dut.rx_clk);
+            rx_trans.rst = rx_mon_intf.rst;
+            rx_trans.data_in_bus = rx_mon_intf.data_in_wire;
+            rx_trans.prescale = rx_mon_intf.prescale;
+            rx_trans.par_enable = rx_mon_intf.par_enable;
+            rx_trans.par_type = rx_mon_intf.par_type;
+            rx_trans.data_out_wire = rx_mon_intf.data_out_bus;
+            rx_trans.busy = rx_mon_intf.data_valid_out;
+            repeat(rx_trans.prescale -2) @(posedge top.dut.rx_clk);
+            rx_trans.rst = rx_mon_intf.rst;
+            rx_trans.data_in_bus = rx_mon_intf.data_in_wire;
+            rx_trans.prescale = rx_mon_intf.prescale;
+            rx_trans.par_enable = rx_mon_intf.par_enable;
+            rx_trans.par_type = rx_mon_intf.par_type;
+            rx_trans.data_out_wire = rx_mon_intf.data_out_bus;
+            rx_trans.busy = rx_mon_intf.data_valid_out;
+            `uvm_info("rx_mon",$sformatf("inside monitor @%d",$time),UVM_NONE)
+            rx_mon_ap.write(rx_trans);
         end
-    endtask*/
+    endtask
 
 endclass
 
@@ -317,19 +346,13 @@ class agent extends uvm_agent;
     `uvm_component_utils(agent)
 
     tx_driver tx_drv;
-    //rx_driver rx_drv;
 
     tx_monitor tx_mon;
-    //rx_monitor rx_mon;
 
     seqr seqr1;
-    //seqr seqr1;
-
-    //uvm_analysis_port #(transaction) agt_ap; //transaction
 
     function new(input string inst="agent",uvm_component comp);
         super.new(inst,comp);
-        //agt_ap = new("agt_ap",this);
     endfunction
 
     function void build_phase(uvm_phase phase);
@@ -343,8 +366,6 @@ class agent extends uvm_agent;
     function void connect_phase(uvm_phase phase);
         //connect drv & seqr
         tx_drv.seq_item_port.connect(seqr1.seq_item_export);
-        //connect monitor ap to agent ap
-        //tx_mon.tx_mon_ap.connect(agt_ap);
     endfunction
 
 endclass
@@ -381,7 +402,7 @@ class scoreboard extends uvm_scoreboard;
     endfunction
 
     task tx_sco(); //chech start bit, parity bit, stop bit, and data(done).
-        int count=0;
+        int count=0, no_par_flag = 0;
         bit [7:0] data_check, data_check_old;
         bit [10:0] packed_data_par;
         bit [9:0] packed_data_no_par;
@@ -413,16 +434,19 @@ class scoreboard extends uvm_scoreboard;
                             data_check_old = data_check;
                             enable_old = enable;
                         end
-                        if(count <10)begin
+                        if(count <10 && !no_par_flag)begin
                             packed_data_par[count] = tx_trans_item.data_out_wire;
                             count++;
+                        end
+                        else if (no_par_flag) begin
+                            no_par_flag = 0;
+                            count = 0;
                         end
                         else begin
                             count = 0;
                         end
                         if(count ==10) begin
                             packed_data_par[count] = tx_trans_item.data_out_wire;
-                            //count = 0;
                             if(data_check_old == packed_data_par[8:1])begin
                                 `uvm_info(get_type_name,"Result is as Expected for data with parity case",UVM_NONE)
                                 pass++;
@@ -435,6 +459,7 @@ class scoreboard extends uvm_scoreboard;
                         end
                     end
                     else begin
+                        no_par_flag = 1;
                         if(count==0)begin
                             data_check_old = data_check;
                             enable_old = enable;
@@ -448,7 +473,6 @@ class scoreboard extends uvm_scoreboard;
                         end
                         if(count ==9) begin
                             packed_data_no_par[count] = tx_trans_item.data_out_wire;
-                            //count = 0;
                             if(data_check_old == packed_data_no_par[8:1])begin
                                 `uvm_info(get_type_name,"Result is as Expected for data without parity case",UVM_NONE)
                                 pass++;
@@ -465,42 +489,15 @@ class scoreboard extends uvm_scoreboard;
                     if(tx_trans_item.data_out_wire)begin
                         if(tx_trans_item.par_enable)begin
 
-                        if(count <10)begin
-                            //packed_data_par[count] = tx_trans_item.data_out_wire;
-                            count++;
-                        end
-                        else begin
-                            count = 0;
-                            //if(data_check_old == packed_data_par[8:1])begin
-                                `uvm_info(get_type_name,"Result is as Expected for idle",UVM_NONE)
-                                pass++;
-                            //end
-                            
-                        end
-                        end
-                        else begin
-
-                            if(count <9)begin
-                                //packed_data_no_par[count] = tx_trans_item.data_out_wire;
-                                count++;
-                            end
-                            else begin
-                                count = 0;
-                                //if(data_check_old == packed_data_no_par[8:1])begin
-                                    `uvm_info(get_type_name,"Result is as Expected for idle",UVM_NONE)
-                                    pass++;
-                                //end
-
-                            end
-                        end
+                        
                     end
                     //the else is left for the assertions
                 end*/
-                `uvm_info(get_type_name,$sformatf("inside sco, data_check= %b",data_check),UVM_NONE)
+                /*`uvm_info(get_type_name,$sformatf("inside sco, data_check= %b",data_check),UVM_NONE)
                 `uvm_info(get_type_name,$sformatf("inside sco, packed_data_par= %b",packed_data_par),UVM_NONE)
                 `uvm_info(get_type_name,$sformatf("inside sco, packed_data_no_par= %b",packed_data_no_par),UVM_NONE)
                 `uvm_info(get_type_name,$sformatf("inside sco, count= %d",count),UVM_NONE)
-                `uvm_info(get_type_name,$sformatf("inside sco, pass= %d, fail= %d",pass,fail),UVM_NONE)
+                `uvm_info(get_type_name,$sformatf("inside sco, pass= %d, fail= %d",pass,fail),UVM_NONE)*/
             end
         end
         
@@ -511,10 +508,15 @@ class scoreboard extends uvm_scoreboard;
             wait(rx_trans.size>0);
             if(rx_trans.size>0)begin
                 rx_trans_item = rx_trans.pop_front();
-                /*if(!rx_trans_item.rst)begin
-                    pass
-                end*/
+                if(!rx_trans_item.rst)begin
+                    `uvm_info(get_type_name,"Result is as Expected for rst case",UVM_NONE)
+                    pass++;
+                end
 
+
+                if(rx_trans_item.data_valid_out)begin
+                    
+                end
             end
         end
     endtask
@@ -597,12 +599,13 @@ class environment extends uvm_env;
         virtual_seqr1 = virtual_seqr::type_id::create("virtual_seqr1",this);
         tx_agent1 = agent::type_id::create("tx_agent1",this);
         sco1 = scoreboard::type_id::create("sco1",this);
-        rx_agent1 = agent::type_id::create("rx_agent1",this);
+        
 
         set_inst_override_by_type("rx_agent1.*",tx_driver::get_type(),rx_driver::get_type());
         set_inst_override_by_type("rx_agent1.*",tx_monitor::get_type(),rx_monitor::get_type());
         //set_inst_override_by_type("rx_agent1.*",seqr::get_type(),seqr::get_type()); //no need
 
+        rx_agent1 = agent::type_id::create("rx_agent1",this);
         
     endfunction
 
